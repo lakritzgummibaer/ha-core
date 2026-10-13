@@ -1,7 +1,7 @@
 """Tests for the Karlsruhe SensorCity sensors."""
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from custom_components.karlsruhe_sensorcity.api import WeatherData
 from custom_components.karlsruhe_sensorcity.const import MAX_DATA_AGE
@@ -11,8 +11,9 @@ from custom_components.karlsruhe_sensorcity.sensor import (
 )
 import pytest
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.util import dt as dt_util
+
+DEVICE_ID = "test-device"
 
 
 def create_weather_data(
@@ -42,16 +43,9 @@ def create_weather_data(
 def create_coordinator(data: WeatherData | None) -> MagicMock:
     """Create a mocked coordinator."""
     coordinator = MagicMock()
-    coordinator.data = data
-    coordinator.device_id = "test-device"
+    coordinator.async_refresh = AsyncMock()
+    coordinator.data = {DEVICE_ID: data} if data is not None else {}
     return coordinator
-
-
-def create_entry() -> MagicMock:
-    """Create a mocked config entry."""
-    entry = MagicMock(spec=ConfigEntry)
-    entry.entry_id = "test-entry"
-    return entry
 
 
 def test_sensor_descriptions() -> None:
@@ -79,14 +73,13 @@ def test_sensor_value(key: str, expected: float) -> None:
     """Test sensor values."""
     data = create_weather_data()
     coordinator = create_coordinator(data)
-    entry = create_entry()
 
     description = next(description for description in SENSORS if description.key == key)
 
     sensor = KarlsruheSensorCitySensor(
         coordinator,
-        entry,
         description,
+        DEVICE_ID,
     )
 
     assert sensor.native_value == expected
@@ -151,14 +144,13 @@ def test_sensor_missing_value(key: str) -> None:
         solar_radiation=None if key == "solar_radiation" else 434.0,
     )
     coordinator = create_coordinator(data)
-    entry = create_entry()
 
     description = next(description for description in SENSORS if description.key == key)
 
     sensor = KarlsruheSensorCitySensor(
         coordinator,
-        entry,
         description,
+        DEVICE_ID,
     )
 
     assert sensor.native_value is None
@@ -170,7 +162,11 @@ def test_sensor_available_with_fresh_data() -> None:
         measured_at=dt_util.utcnow() - timedelta(minutes=1),
     )
     coordinator = create_coordinator(data)
-    sensor = KarlsruheSensorCitySensor(coordinator, create_entry(), SENSORS[0])
+    sensor = KarlsruheSensorCitySensor(
+        coordinator,
+        SENSORS[0],
+        DEVICE_ID,
+    )
 
     assert sensor.available is True
 
@@ -181,7 +177,11 @@ def test_sensor_unavailable_with_stale_data() -> None:
         measured_at=dt_util.utcnow() - MAX_DATA_AGE - timedelta(minutes=1),
     )
     coordinator = create_coordinator(data)
-    sensor = KarlsruheSensorCitySensor(coordinator, create_entry(), SENSORS[0])
+    sensor = KarlsruheSensorCitySensor(
+        coordinator,
+        SENSORS[0],
+        DEVICE_ID,
+    )
 
     assert sensor.available is False
 
@@ -190,9 +190,13 @@ def test_sensor_unavailable_without_data() -> None:
     """Test that a sensor is unavailable without coordinator data."""
     data = create_weather_data()
     coordinator = create_coordinator(data)
-    sensor = KarlsruheSensorCitySensor(coordinator, create_entry(), SENSORS[0])
+    sensor = KarlsruheSensorCitySensor(
+        coordinator,
+        SENSORS[0],
+        DEVICE_ID,
+    )
 
-    coordinator.data = None
+    coordinator.data = {}
 
     assert sensor.available is False
 
@@ -202,7 +206,11 @@ def test_sensor_station_attributes() -> None:
     measured_at = datetime(2026, 9, 17, 10, 0, tzinfo=UTC)
     data = create_weather_data(measured_at=measured_at)
     coordinator = create_coordinator(data)
-    sensor = KarlsruheSensorCitySensor(coordinator, create_entry(), SENSORS[0])
+    sensor = KarlsruheSensorCitySensor(
+        coordinator,
+        SENSORS[0],
+        DEVICE_ID,
+    )
 
     assert sensor.extra_state_attributes == {
         "last_measurement": measured_at.isoformat(),
@@ -218,7 +226,11 @@ def test_sensor_missing_coordinates() -> None:
         longitude=None,
     )
     coordinator = create_coordinator(data)
-    sensor = KarlsruheSensorCitySensor(coordinator, create_entry(), SENSORS[0])
+    sensor = KarlsruheSensorCitySensor(
+        coordinator,
+        SENSORS[0],
+        DEVICE_ID,
+    )
 
     assert sensor.extra_state_attributes["latitude"] is None
     assert sensor.extra_state_attributes["longitude"] is None
@@ -228,8 +240,28 @@ def test_sensor_station_attributes_without_data() -> None:
     """Test station information without coordinator data."""
     data = create_weather_data()
     coordinator = create_coordinator(data)
-    sensor = KarlsruheSensorCitySensor(coordinator, create_entry(), SENSORS[0])
+    sensor = KarlsruheSensorCitySensor(
+        coordinator,
+        SENSORS[0],
+        DEVICE_ID,
+    )
 
-    coordinator.data = None
+    coordinator.data = {}
 
     assert sensor.extra_state_attributes == {}
+
+
+def test_sensor_unavailable_after_25_minutes_without_update() -> None:
+    """Test that a sensor becomes unavailable when its data gets stale."""
+    data = create_weather_data(
+        measured_at=dt_util.utcnow() - MAX_DATA_AGE - timedelta(seconds=1),
+    )
+    coordinator = create_coordinator(data)
+
+    sensor = KarlsruheSensorCitySensor(
+        coordinator,
+        SENSORS[0],
+        DEVICE_ID,
+    )
+
+    assert sensor.available is False

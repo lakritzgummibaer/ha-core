@@ -3,13 +3,16 @@
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
-from custom_components.karlsruhe_sensorcity.api import KarlsruheSensorCityApi
+from custom_components.karlsruhe_sensorcity.api import KarlsruheSensorCityApi, Station
 from custom_components.karlsruhe_sensorcity.const import (
     API_URL,
     CURRENT_LAYER,
     REQUEST_TIMEOUT,
+    SensorType,
 )
 import pytest
+
+DEVICE_ID = "test-device"
 
 
 def create_response(data: dict) -> MagicMock:
@@ -52,7 +55,7 @@ async def test_get_latest() -> None:
 
     api = KarlsruheSensorCityApi(session)
 
-    result = await api.get_latest("test-device")
+    result = await api.get_latest(DEVICE_ID, SensorType.WEATHER)
 
     assert result.device_id == "test-device"
     assert result.name == "Teststation"
@@ -110,7 +113,7 @@ async def test_get_latest_without_geometry() -> None:
 
     api = KarlsruheSensorCityApi(session)
 
-    result = await api.get_latest("test-device")
+    result = await api.get_latest(DEVICE_ID, SensorType.WEATHER)
 
     assert result.latitude is None
     assert result.longitude is None
@@ -146,7 +149,7 @@ async def test_get_latest_with_missing_measurement() -> None:
 
     api = KarlsruheSensorCityApi(session)
 
-    result = await api.get_latest("test-device")
+    result = await api.get_latest(DEVICE_ID, SensorType.WEATHER)
 
     assert result.temperature == 21.5
     assert result.humidity is None
@@ -165,7 +168,7 @@ async def test_get_latest_without_features() -> None:
     api = KarlsruheSensorCityApi(session)
 
     with pytest.raises(ValueError, match="No measurements found"):
-        await api.get_latest("test-device")
+        await api.get_latest(DEVICE_ID, SensorType.WEATHER)
 
 
 @pytest.mark.asyncio
@@ -185,7 +188,7 @@ async def test_get_latest_with_api_error() -> None:
     api = KarlsruheSensorCityApi(session)
 
     with pytest.raises(ValueError, match="Invalid query"):
-        await api.get_latest("test-device")
+        await api.get_latest(DEVICE_ID, SensorType.WEATHER)
 
 
 @pytest.mark.asyncio
@@ -215,12 +218,12 @@ async def test_get_stations() -> None:
 
     api = KarlsruheSensorCityApi(session)
 
-    result = await api.get_stations()
+    result = await api.get_stations(SensorType.WEATHER)
 
-    assert result == {
-        "station-1": "Station Eins",
-        "station-2": "Station Zwei",
-    }
+    assert result == [
+        Station(device_id="station-1", name="Station Eins"),
+        Station(device_id="station-2", name="Station Zwei"),
+    ]
 
     session.get.assert_called_once_with(
         f"{API_URL}/{CURRENT_LAYER}",
@@ -261,9 +264,11 @@ async def test_get_stations_removes_duplicates() -> None:
 
     api = KarlsruheSensorCityApi(session)
 
-    result = await api.get_stations()
+    result = await api.get_stations(SensorType.WEATHER)
 
-    assert result == {"station-1": "Aktueller Name"}
+    assert result == [
+        Station(device_id="station-1", name="Aktueller Name"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -277,7 +282,7 @@ async def test_get_stations_without_features() -> None:
     api = KarlsruheSensorCityApi(session)
 
     with pytest.raises(ValueError, match="No stations found"):
-        await api.get_stations()
+        await api.get_stations(SensorType.WEATHER)
 
 
 @pytest.mark.asyncio
@@ -299,7 +304,7 @@ async def test_get_stations_without_attributes() -> None:
     api = KarlsruheSensorCityApi(session)
 
     with pytest.raises(ValueError, match="Missing attributes"):
-        await api.get_stations()
+        await api.get_stations(SensorType.WEATHER)
 
 
 @pytest.mark.asyncio
@@ -319,4 +324,4 @@ async def test_get_stations_with_api_error() -> None:
     api = KarlsruheSensorCityApi(session)
 
     with pytest.raises(ValueError, match="Invalid query"):
-        await api.get_stations()
+        await api.get_stations(SensorType.WEATHER)
