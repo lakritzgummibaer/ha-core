@@ -168,9 +168,15 @@ async def test_empty_station_selection_shows_error(
     ):
         result = await flow.async_step_stations({CONF_DEVICE_IDS: []})
 
-    assert result["type"] == "form"
-    assert result["step_id"] == "stations"
-    assert result["errors"] == {CONF_DEVICE_IDS: "no_stations_selected"}
+        assert result["type"] == "form"
+        assert result["step_id"] == "stations"
+        assert result["errors"] == {CONF_DEVICE_IDS: "no_stations_selected"}
+
+        result = await flow.async_step_stations({CONF_DEVICE_IDS: ["device-1"]})
+
+    assert result["type"] == "create_entry"
+    assert result["data"][CONF_SENSOR_TYPE] == SensorType.WEATHER
+    assert result["data"][CONF_DEVICE_IDS] == ["device-1"]
 
 
 async def test_multiple_stations_create_entry(
@@ -189,3 +195,46 @@ async def test_multiple_stations_create_entry(
     assert result["data"][CONF_SENSOR_TYPE] == SensorType.WEATHER
     assert result["data"][CONF_DEVICE_IDS] == selected_ids
     assert result["title"] == "SensorCity - Weather"
+
+
+async def test_wind_sensor_type_is_passed_to_api(
+    hass: HomeAssistant,
+) -> None:
+    """Test that the selected sensor type is passed to the API."""
+    flow = KarlsruheSensorCityConfigFlow()
+    flow.hass = hass
+    flow.sensor_type = SensorType.WIND
+
+    stations = [
+        Station(device_id="wind-1", name="Windstation A"),
+    ]
+
+    with (
+        patch(SESSION_PATH, return_value=MagicMock()),
+        patch(
+            API_PATH,
+            new=AsyncMock(return_value=stations),
+        ) as get_stations,
+    ):
+        result = await flow.async_step_stations()
+
+    assert result["type"] == "form"
+    get_stations.assert_awaited_once_with(SensorType.WIND)
+
+
+async def test_wind_stations_create_entry(
+    hass: HomeAssistant,
+) -> None:
+    """Test creating an entry for wind sensors."""
+    flow = KarlsruheSensorCityConfigFlow()
+    flow.hass = hass
+    flow.sensor_type = SensorType.WIND
+
+    selected_ids = ["wind-1", "wind-2"]
+
+    result = await flow.async_step_stations({CONF_DEVICE_IDS: selected_ids})
+
+    assert result["type"] == "create_entry"
+    assert result["data"][CONF_SENSOR_TYPE] == SensorType.WIND
+    assert result["data"][CONF_DEVICE_IDS] == selected_ids
+    assert result["title"] == "SensorCity - Wind"

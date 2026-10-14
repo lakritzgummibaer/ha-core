@@ -87,6 +87,100 @@ async def test_get_latest() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_latest_wind() -> None:
+    """Test retrieving the latest wind measurement."""
+    response = create_response(
+        {
+            "features": [
+                {
+                    "attributes": {
+                        "device_id": DEVICE_ID,
+                        "name": "Windstation",
+                        "measured_at": 1750000000000,
+                        "wind_average_kmh": 12.4,
+                        "windgust_1s_kmh": 28.7,
+                        "windgust_3s_kmh": 24.2,
+                        "wind_direction_degree": 225,
+                    },
+                    "geometry": {"x": 8.404, "y": 49.009},
+                }
+            ]
+        }
+    )
+
+    session = MagicMock()
+    session.get.return_value = response
+    api = KarlsruheSensorCityApi(session)
+
+    result = await api.get_latest(DEVICE_ID, SensorType.WIND)
+
+    assert result.device_id == DEVICE_ID
+    assert result.name == "Windstation"
+    assert result.measured_at == datetime.fromtimestamp(
+        1750000000000 / 1000,
+        tz=UTC,
+    )
+    assert result.wind_average_speed == 12.4
+    assert result.wind_gust_1s == 28.7
+    assert result.wind_gust_3s == 24.2
+    assert result.wind_direction == 225
+    assert result.latitude == 49.009
+    assert result.longitude == 8.404
+
+    session.get.assert_called_once_with(
+        f"{API_URL}/{CURRENT_LAYER}",
+        params={
+            "where": f"device_id = '{DEVICE_ID}'",
+            "outFields": (
+                "device_id,name,measured_at,wind_average_kmh,"
+                "windgust_1s_kmh,windgust_3s_kmh,wind_direction_degree"
+            ),
+            "orderByFields": "measured_at DESC",
+            "resultRecordCount": 1,
+            "returnGeometry": "true",
+            "f": "json",
+        },
+        timeout=REQUEST_TIMEOUT,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_latest_wind_with_missing_measurements() -> None:
+    """Test retrieving wind measurements with missing values."""
+    response = create_response(
+        {
+            "features": [
+                {
+                    "attributes": {
+                        "device_id": DEVICE_ID,
+                        "name": "Windstation",
+                        "measured_at": 1750000000000,
+                        "wind_average_kmh": None,
+                        "windgust_1s_kmh": None,
+                        "windgust_3s_kmh": 8.5,
+                        "wind_direction_degree": None,
+                    },
+                    "geometry": None,
+                }
+            ]
+        }
+    )
+
+    session = MagicMock()
+    session.get.return_value = response
+    api = KarlsruheSensorCityApi(session)
+
+    result = await api.get_latest(DEVICE_ID, SensorType.WIND)
+
+    assert result.wind_average_speed is None
+    assert result.wind_gust_1s is None
+    assert result.wind_gust_3s == 8.5
+    assert result.wind_direction is None
+    assert result.latitude is None
+    assert result.longitude is None
+
+
+@pytest.mark.asyncio
 async def test_get_latest_without_geometry() -> None:
     """Test retrieving a measurement without geometry."""
     response = create_response(
@@ -229,6 +323,47 @@ async def test_get_stations() -> None:
         f"{API_URL}/{CURRENT_LAYER}",
         params={
             "where": "beschreibung = 'Temperatur-Sensor'",
+            "outFields": "device_id,name",
+            "returnDistinctValues": "true",
+            "returnGeometry": "true",
+            "f": "json",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_stations_wind() -> None:
+    """Test retrieving available wind stations."""
+    response = create_response(
+        {
+            "features": [
+                {
+                    "attributes": {
+                        "device_id": "wind-station-1",
+                        "name": "Windstation Eins",
+                    }
+                }
+            ]
+        }
+    )
+
+    session = MagicMock()
+    session.get.return_value = response
+    api = KarlsruheSensorCityApi(session)
+
+    result = await api.get_stations(SensorType.WIND)
+
+    assert result == [
+        Station(
+            device_id="wind-station-1",
+            name="Windstation Eins",
+        ),
+    ]
+
+    session.get.assert_called_once_with(
+        f"{API_URL}/{CURRENT_LAYER}",
+        params={
+            "where": "beschreibung = 'Wind-Sensor'",
             "outFields": "device_id,name",
             "returnDistinctValues": "true",
             "returnGeometry": "true",

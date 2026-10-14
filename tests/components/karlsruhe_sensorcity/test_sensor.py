@@ -3,14 +3,23 @@
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
-from custom_components.karlsruhe_sensorcity.api import WeatherData
-from custom_components.karlsruhe_sensorcity.const import MAX_DATA_AGE
+from custom_components.karlsruhe_sensorcity.api import WeatherData, WindData
+from custom_components.karlsruhe_sensorcity.const import (
+    DOMAIN,
+    MAX_DATA_AGE,
+    WIND_DIRECTION_MIN_SPEED,
+    SensorType,
+)
 from custom_components.karlsruhe_sensorcity.sensor import (
-    SENSORS,
+    WEATHER_SENSORS,
+    WIND_SENSORS,
     KarlsruheSensorCitySensor,
+    async_setup_entry,
 )
 import pytest
 
+from homeassistant.components.sensor import SensorEntityDescription
+from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 DEVICE_ID = "test-device"
@@ -40,19 +49,48 @@ def create_weather_data(
     )
 
 
-def create_coordinator(data: WeatherData | None) -> MagicMock:
+def create_wind_data(
+    *,
+    measured_at: datetime | None = None,
+    wind_average_speed: float | None = 12.4,
+    wind_gust_1s: float | None = 28.7,
+    wind_gust_3s: float | None = 24.2,
+    wind_direction: int | None = 225,
+    latitude: float | None = 49.009,
+    longitude: float | None = 8.404,
+) -> WindData:
+    """Create test wind data."""
+    return WindData(
+        device_id=DEVICE_ID,
+        name="Teststation",
+        measured_at=measured_at or dt_util.utcnow(),
+        latitude=latitude,
+        longitude=longitude,
+        wind_average_speed=wind_average_speed,
+        wind_gust_1s=wind_gust_1s,
+        wind_gust_3s=wind_gust_3s,
+        wind_direction=wind_direction,
+    )
+
+
+def create_coordinator(
+    data: WeatherData | WindData | None,
+    sensor_type: SensorType = SensorType.WEATHER,
+) -> MagicMock:
     """Create a mocked coordinator."""
     coordinator = MagicMock()
     coordinator.async_refresh = AsyncMock()
+    coordinator.sensor_type = sensor_type
+    coordinator.device_ids = [DEVICE_ID]
     coordinator.data = {DEVICE_ID: data} if data is not None else {}
     return coordinator
 
 
 def test_sensor_descriptions() -> None:
     """Test that all expected sensors are defined."""
-    assert len(SENSORS) == 4
+    assert len(WEATHER_SENSORS) == 4
 
-    assert {description.key for description in SENSORS} == {
+    assert {description.key for description in WEATHER_SENSORS} == {
         "temperature",
         "humidity",
         "pressure",
@@ -74,7 +112,9 @@ def test_sensor_value(key: str, expected: float) -> None:
     data = create_weather_data()
     coordinator = create_coordinator(data)
 
-    description = next(description for description in SENSORS if description.key == key)
+    description = next(
+        description for description in WEATHER_SENSORS if description.key == key
+    )
 
     sensor = KarlsruheSensorCitySensor(
         coordinator,
@@ -116,7 +156,9 @@ def test_sensor_units(
     device_class: str | None,
 ) -> None:
     """Test sensor units and device classes."""
-    description = next(description for description in SENSORS if description.key == key)
+    description = next(
+        description for description in WEATHER_SENSORS if description.key == key
+    )
 
     assert description.native_unit_of_measurement == unit
 
@@ -145,7 +187,9 @@ def test_sensor_missing_value(key: str) -> None:
     )
     coordinator = create_coordinator(data)
 
-    description = next(description for description in SENSORS if description.key == key)
+    description = next(
+        description for description in WEATHER_SENSORS if description.key == key
+    )
 
     sensor = KarlsruheSensorCitySensor(
         coordinator,
@@ -164,7 +208,7 @@ def test_sensor_available_with_fresh_data() -> None:
     coordinator = create_coordinator(data)
     sensor = KarlsruheSensorCitySensor(
         coordinator,
-        SENSORS[0],
+        WEATHER_SENSORS[0],
         DEVICE_ID,
     )
 
@@ -179,7 +223,7 @@ def test_sensor_unavailable_with_stale_data() -> None:
     coordinator = create_coordinator(data)
     sensor = KarlsruheSensorCitySensor(
         coordinator,
-        SENSORS[0],
+        WEATHER_SENSORS[0],
         DEVICE_ID,
     )
 
@@ -192,7 +236,7 @@ def test_sensor_unavailable_without_data() -> None:
     coordinator = create_coordinator(data)
     sensor = KarlsruheSensorCitySensor(
         coordinator,
-        SENSORS[0],
+        WEATHER_SENSORS[0],
         DEVICE_ID,
     )
 
@@ -208,7 +252,7 @@ def test_sensor_station_attributes() -> None:
     coordinator = create_coordinator(data)
     sensor = KarlsruheSensorCitySensor(
         coordinator,
-        SENSORS[0],
+        WEATHER_SENSORS[0],
         DEVICE_ID,
     )
 
@@ -228,7 +272,7 @@ def test_sensor_missing_coordinates() -> None:
     coordinator = create_coordinator(data)
     sensor = KarlsruheSensorCitySensor(
         coordinator,
-        SENSORS[0],
+        WEATHER_SENSORS[0],
         DEVICE_ID,
     )
 
@@ -242,7 +286,7 @@ def test_sensor_station_attributes_without_data() -> None:
     coordinator = create_coordinator(data)
     sensor = KarlsruheSensorCitySensor(
         coordinator,
-        SENSORS[0],
+        WEATHER_SENSORS[0],
         DEVICE_ID,
     )
 
@@ -260,8 +304,182 @@ def test_sensor_unavailable_after_25_minutes_without_update() -> None:
 
     sensor = KarlsruheSensorCitySensor(
         coordinator,
-        SENSORS[0],
+        WEATHER_SENSORS[0],
         DEVICE_ID,
     )
 
     assert sensor.available is False
+
+
+def test_wind_sensor_descriptions() -> None:
+    """Test that all expected wind sensors are defined."""
+    assert len(WIND_SENSORS) == 4
+
+    assert {description.key for description in WIND_SENSORS} == {
+        "wind_average_speed",
+        "wind_gust_1s",
+        "wind_gust_3s",
+        "wind_direction",
+    }
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [
+        ("wind_average_speed", 12.4),
+        ("wind_gust_1s", 28.7),
+        ("wind_gust_3s", 24.2),
+        ("wind_direction", 225),
+    ],
+)
+def test_wind_sensor_value(key: str, expected: float) -> None:
+    """Test wind sensor values."""
+    data = create_wind_data()
+    coordinator = create_coordinator(data, SensorType.WIND)
+
+    description = next(
+        description for description in WIND_SENSORS if description.key == key
+    )
+
+    sensor = KarlsruheSensorCitySensor(coordinator, description, DEVICE_ID)
+
+    assert sensor.native_value == expected
+
+
+@pytest.mark.parametrize(
+    ("key", "unit", "device_class", "state_class"),
+    [
+        (
+            "wind_average_speed",
+            "km/h",
+            "wind_speed",
+            "measurement",
+        ),
+        (
+            "wind_gust_1s",
+            "km/h",
+            "wind_speed",
+            "measurement",
+        ),
+        (
+            "wind_gust_3s",
+            "km/h",
+            "wind_speed",
+            "measurement",
+        ),
+        (
+            "wind_direction",
+            "°",
+            "wind_direction",
+            "measurement_angle",
+        ),
+    ],
+)
+def test_wind_sensor_units_and_classes(
+    key: str,
+    unit: str,
+    device_class: str,
+    state_class: str,
+) -> None:
+    """Test wind sensor units and classes."""
+    description = next(
+        description for description in WIND_SENSORS if description.key == key
+    )
+
+    assert description.native_unit_of_measurement == unit
+    assert description.device_class.value == device_class
+    assert description.state_class.value == state_class
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "wind_average_speed",
+        "wind_gust_1s",
+        "wind_gust_3s",
+        "wind_direction",
+    ],
+)
+def test_wind_sensor_missing_value(key: str) -> None:
+    """Test wind sensors with missing measurement values."""
+    data = create_wind_data(
+        wind_average_speed=None if key == "wind_average_speed" else 12.4,
+        wind_gust_1s=None if key == "wind_gust_1s" else 28.7,
+        wind_gust_3s=None if key == "wind_gust_3s" else 24.2,
+        wind_direction=None if key == "wind_direction" else 225,
+    )
+    coordinator = create_coordinator(data, SensorType.WIND)
+
+    description = next(
+        description for description in WIND_SENSORS if description.key == key
+    )
+
+    sensor = KarlsruheSensorCitySensor(coordinator, description, DEVICE_ID)
+
+    assert sensor.native_value is None
+
+
+@pytest.mark.parametrize(
+    ("sensor_type", "descriptions"),
+    [
+        (SensorType.WEATHER, WEATHER_SENSORS),
+        (SensorType.WIND, WIND_SENSORS),
+    ],
+)
+async def test_async_setup_entry(
+    hass: HomeAssistant,
+    sensor_type: SensorType,
+    descriptions: tuple[SensorEntityDescription, ...],
+) -> None:
+    """Test that the correct sensors are created for a sensor type."""
+    data = (
+        create_weather_data()
+        if sensor_type is SensorType.WEATHER
+        else create_wind_data()
+    )
+    coordinator = create_coordinator(data, sensor_type)
+
+    entry = MagicMock()
+    entry.entry_id = "test-entry"
+
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+    add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, add_entities)
+
+    add_entities.assert_called_once()
+    entities = list(add_entities.call_args.args[0])
+
+    assert len(entities) == len(descriptions)
+    assert all(isinstance(entity, KarlsruheSensorCitySensor) for entity in entities)
+    assert {entity.entity_description.key for entity in entities} == {
+        description.key for description in descriptions
+    }
+
+
+def test_wind_direction_unavailable_at_low_speed() -> None:
+    """Test that wind direction is omitted at low wind speeds."""
+    data = create_wind_data(
+        wind_average_speed=1.5,
+        wind_direction=225,
+    )
+    coordinator = create_coordinator(data, SensorType.WIND)
+    description = next(item for item in WIND_SENSORS if item.key == "wind_direction")
+
+    sensor = KarlsruheSensorCitySensor(coordinator, description, DEVICE_ID)
+
+    assert sensor.native_value is None
+
+
+def test_wind_direction_unavailable_at_threshold_speed() -> None:
+    """Test that wind direction is omitted at low wind speeds."""
+    data = create_wind_data(
+        wind_average_speed=WIND_DIRECTION_MIN_SPEED,
+        wind_direction=225,
+    )
+    coordinator = create_coordinator(data, SensorType.WIND)
+    description = next(item for item in WIND_SENSORS if item.key == "wind_direction")
+
+    sensor = KarlsruheSensorCitySensor(coordinator, description, DEVICE_ID)
+
+    assert sensor.native_value == 225
